@@ -1,0 +1,5 @@
+smartmontools (6.4-1rax1) unstable; urgency=low
+
+  * Initial release
+
+ -- Jonathan Brown <jbrown@rackspace.com>  Tue, 19 Jan 2016 20:57:40 +0000
