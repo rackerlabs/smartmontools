@@ -1,46 +1,40 @@
 /*
  * utility.h
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
- * Copyright (C) 2002-11 Bruce Allen <smartmontools-support@lists.sourceforge.net>
- * Copyright (C) 2008-14 Christian Franke <smartmontools-support@lists.sourceforge.net>
+ * Copyright (C) 2002-11 Bruce Allen
+ * Copyright (C) 2008-20 Christian Franke
  * Copyright (C) 2000 Michael Cornwell <cornwell@acm.org>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
- * This code was originally developed as a Senior Thesis by Michael Cornwell
- * at the Concurrent Systems Laboratory (now part of the Storage Systems
- * Research Center), Jack Baskin School of Engineering, University of
- * California, Santa Cruz. http://ssrc.soe.ucsc.edu/
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #ifndef UTILITY_H_
 #define UTILITY_H_
 
-#define UTILITY_H_CVSID "$Id: utility.h 4028 2014-12-13 14:59:48Z chrfranke $"
+#define UTILITY_H_CVSID "$Id: utility.h 5035 2020-03-01 16:19:44Z chrfranke $"
 
+#include <float.h> // *DBL_MANT_DIG
 #include <time.h>
-#include <sys/types.h> // for regex.h (according to POSIX)
-#include <regex.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <string>
+
+#include <sys/types.h> // for regex.h (according to POSIX)
+#ifdef WITH_CXX11_REGEX
+#include <regex>
+#else
+#include <regex.h>
+#endif
 
 #ifndef __GNUC__
 #define __attribute_format_printf(x, y)  /**/
 #elif defined(__MINGW32__) && __USE_MINGW_ANSI_STDIO
 // Check format of __mingw_*printf() instead of MSVCRT.DLL:*printf()
 #define __attribute_format_printf(x, y)  __attribute__((format (gnu_printf, x, y)))
-#define HAVE_WORKING_SNPRINTF 1
 #else
 #define __attribute_format_printf(x, y)  __attribute__((format (printf, x, y)))
 #endif
@@ -48,7 +42,7 @@
 // Make version information string
 std::string format_version_info(const char * prog_name, bool full = false);
 
-// return (v)sprintf() formated std::string
+// return (v)sprintf() formatted std::string
 std::string strprintf(const char * fmt, ...)
     __attribute_format_printf(1, 2);
 std::string vstrprintf(const char * fmt, va_list ap);
@@ -60,27 +54,14 @@ inline bool str_starts_with(const char * str, const char * prefix)
 inline bool str_starts_with(const std::string & str, const char * prefix)
   { return !strncmp(str.c_str(), prefix, strlen(prefix)); }
 
-#ifndef HAVE_WORKING_SNPRINTF
-// Substitute by safe replacement functions
-int safe_snprintf(char *buf, int size, const char *fmt, ...)
-    __attribute_format_printf(3, 4);
-int safe_vsnprintf(char *buf, int size, const char *fmt, va_list ap);
-#define snprintf  safe_snprintf
-#define vsnprintf safe_vsnprintf
-#endif
+// Convert time to broken-down local time, throw on error.
+struct tm * time_to_tm_local(struct tm * tp, time_t t);
 
-#ifndef HAVE_STRTOULL
-// Replacement for missing strtoull() (Linux with libc < 6, MSVC)
-uint64_t strtoull(const char * p, char * * endp, int base);
-#endif
-
-// Utility function prints current date and time and timezone into a
-// character buffer of length>=64.  All the fuss is needed to get the
+// Utility function prints date and time and timezone into a character
+// buffer of length 64.  All the fuss is needed to get the
 // right timezone info (sigh).
 #define DATEANDEPOCHLEN 64
-void dateandtimezone(char *buffer);
-// Same, but for time defined by epoch tval
-void dateandtimezoneepoch(char *buffer, time_t tval);
+void dateandtimezoneepoch(char (& buffer)[DATEANDEPOCHLEN], time_t tval);
 
 // like printf() except that we can control it better. Note --
 // although the prototype is given here in utility.h, the function
@@ -92,28 +73,8 @@ void pout(const char *fmt, ...)
 // replacement for perror() with redirected output.
 void syserror(const char *message);
 
-// Function for processing -r option in smartctl and smartd
-int split_report_arg(char *s, int *i);
-
 // Function for processing -t selective... option in smartctl
 int split_selective_arg(char *s, uint64_t *start, uint64_t *stop, int *mode);
-
-// Replacement for exit(status)
-// (exit is not compatible with C++ destructors)
-#define EXIT(status) { throw (int)(status); }
-
-
-#ifdef OLD_INTERFACE
-
-// Utility function to free memory
-void *FreeNonZero(void* address, int size, int whatline, const char* file);
-
-// A custom version of strdup() that keeps track of how much memory is
-// being allocated. If mustexist is set, it also throws an error if we
-// try to duplicate a NULL string.
-char *CustomStrDup(const char *ptr, int mustexist, int whatline, const char* file);
-
-#endif // OLD_INTERFACE
 
 // Compile time check of byte ordering
 // (inline const function allows compiler to remove dead code)
@@ -125,6 +86,17 @@ inline bool isbigendian()
   return false;
 #endif
 }
+
+void swap2(char *location);
+void swap4(char *location);
+void swap8(char *location);
+// Typesafe variants using overloading
+inline void swapx(unsigned short * p)
+  { swap2((char*)p); }
+inline void swapx(unsigned int * p)
+  { swap4((char*)p); }
+inline void swapx(uint64_t * p)
+  { swap8((char*)p); }
 
 // Runtime check of ./configure result, throws on error.
 void check_config();
@@ -139,6 +111,15 @@ bool nonempty(const void * data, int size);
 
 // needed to fix glibc bug
 void FixGlibcTimeZoneBug();
+
+// Copy not null terminated char array to null terminated string.
+// Replace non-ascii characters.  Remove leading and trailing blanks.
+const char * format_char_array(char * str, int strsize, const char * chr, int chrsize);
+
+// Version for fixed size buffers.
+template<size_t STRSIZE, size_t CHRSIZE>
+inline const char * format_char_array(char (& str)[STRSIZE], const char (& chr)[CHRSIZE])
+  { return format_char_array(str, (int)STRSIZE, chr, (int)CHRSIZE); }
 
 // Format integer with thousands separator
 const char * format_with_thousands_sep(char * str, int strsize, uint64_t val,
@@ -194,6 +175,8 @@ public:
 
   bool open(const char * name, const char * mode)
     {
+      if (m_file && m_owner)
+        fclose(m_file);
       m_file = fopen(name, mode);
       m_owner = true;
       return !!m_file;
@@ -201,6 +184,8 @@ public:
 
   void open(FILE * f, bool owner = false)
     {
+      if (m_file && m_owner)
+        fclose(m_file);
       m_file = f;
       m_owner = owner;
     }
@@ -230,25 +215,30 @@ private:
   void operator=(const stdio_file &);
 };
 
-/// Wrapper class for regex(3).
+/// Wrapper class for POSIX regex(3) or std::regex
 /// Supports copy & assignment and is compatible with STL containers.
 class regular_expression
 {
 public:
   // Construction & assignment
-  regular_expression();
+#ifdef WITH_CXX11_REGEX
+  regular_expression() = default;
 
-  regular_expression(const char * pattern, int flags,
-                     bool throw_on_error = true);
+#else
+  regular_expression();
 
   ~regular_expression();
 
   regular_expression(const regular_expression & x);
 
   regular_expression & operator=(const regular_expression & x);
+#endif
+
+  /// Construct with pattern, throw on error.
+  explicit regular_expression(const char * pattern);
 
   /// Set and compile new pattern, return false on error.
-  bool compile(const char * pattern, int flags);
+  bool compile(const char * pattern);
 
   // Get pattern from last compile().
   const char * get_pattern() const
@@ -262,32 +252,64 @@ public:
   bool empty() const
     { return (m_pattern.empty() || !m_errmsg.empty()); }
 
-  /// Return true if substring matches pattern
-  bool match(const char * str, int flags = 0) const
-    { return !regexec(&m_regex_buf, str, 0, (regmatch_t*)0, flags); }
-
   /// Return true if full string matches pattern
-  bool full_match(const char * str, int flags = 0) const
-    {
-      regmatch_t range;
-      return (   !regexec(&m_regex_buf, str, 1, &range, flags)
-              && range.rm_so == 0 && range.rm_eo == (int)strlen(str));
-    }
+  bool full_match(const char * str) const;
 
-  /// Return true if substring matches pattern, fill regmatch_t array.
-  bool execute(const char * str, unsigned nmatch, regmatch_t * pmatch, int flags = 0) const
-    { return !regexec(&m_regex_buf, str, nmatch, pmatch, flags); }
+#ifdef WITH_CXX11_REGEX
+  struct match_range { int rm_so, rm_eo; };
+#else
+  typedef regmatch_t match_range;
+#endif
+
+  /// Return true if substring matches pattern, fill match_range array.
+  bool execute(const char * str, unsigned nmatch, match_range * pmatch) const;
 
 private:
   std::string m_pattern;
-  int m_flags;
-  regex_t m_regex_buf;
   std::string m_errmsg;
 
+#ifdef WITH_CXX11_REGEX
+  std::regex m_regex;
+#else
+  regex_t m_regex_buf;
   void free_buf();
-  void copy(const regular_expression & x);
+  void copy_buf(const regular_expression & x);
+#endif
+
   bool compile();
 };
+
+// 128-bit unsigned integer to string conversion.
+// Provides full integer precision if compiler supports '__int128'.
+// Otherwise precision depends on supported floating point data types.
+
+#if defined(HAVE_LONG_DOUBLE_WIDER) && \
+    (!defined(__MINGW32__) || defined(__USE_MINGW_ANSI_STDIO))
+    // MinGW 'long double' type does not work with MSVCRT *printf()
+#define HAVE_LONG_DOUBLE_WIDER_PRINTF 1
+#else
+#undef HAVE_LONG_DOUBLE_WIDER_PRINTF
+#endif
+
+// Return #bits precision provided by uint128_hilo_to_str().
+inline int uint128_to_str_precision_bits()
+{
+#if defined(HAVE___INT128)
+  return 128;
+#elif defined(HAVE_LONG_DOUBLE_WIDER_PRINTF)
+  return LDBL_MANT_DIG;
+#else
+  return DBL_MANT_DIG;
+#endif
+}
+
+// Convert 128-bit unsigned integer provided as two 64-bit halves to a string.
+const char * uint128_hilo_to_str(char * str, int strsize, uint64_t value_hi, uint64_t value_lo);
+
+// Version for fixed size buffers.
+template <size_t SIZE>
+inline const char * uint128_hilo_to_str(char (& str)[SIZE], uint64_t value_hi, uint64_t value_lo)
+  { return uint128_hilo_to_str(str, (int)SIZE, value_hi, value_lo); }
 
 #ifdef _WIN32
 // Get exe directory
@@ -304,4 +326,3 @@ std::string get_exe_dir();
 #endif
 
 #endif
-

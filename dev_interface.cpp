@@ -1,29 +1,24 @@
 /*
  * dev_interface.cpp
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
- * Copyright (C) 2008-13 Christian Franke <smartmontools-support@lists.sourceforge.net>
+ * Copyright (C) 2008-20 Christian Franke
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include "config.h"
-#include "int64.h"
+
 #include "dev_interface.h"
 #include "dev_tunnelled.h"
 #include "atacmds.h" // ATA_SMART_CMD/STATUS
+#include "scsicmds.h" // scsi_cmnd_io
 #include "utility.h"
 
 #include <errno.h>
 #include <stdarg.h>
+#include <stdlib.h> // realpath()
 #include <stdexcept>
 
 #if defined(HAVE_GETTIMEOFDAY)
@@ -32,27 +27,31 @@
 #include <sys/timeb.h>
 #endif
 
-const char * dev_interface_cpp_cvsid = "$Id: dev_interface.cpp 3741 2013-01-02 17:06:54Z chrfranke $"
+const char * dev_interface_cpp_cvsid = "$Id: dev_interface.cpp 5115 2020-11-09 22:07:22Z chrfranke $"
   DEV_INTERFACE_H_CVSID;
 
 /////////////////////////////////////////////////////////////////////////////
 // smart_device
 
+int smart_device::s_num_objects = 0;
+
 smart_device::smart_device(smart_interface * intf, const char * dev_name,
     const char * dev_type, const char * req_type)
 : m_intf(intf), m_info(dev_name, dev_type, req_type),
-  m_ata_ptr(0), m_scsi_ptr(0)
+  m_ata_ptr(0), m_scsi_ptr(0), m_nvme_ptr(0)
 {
+  s_num_objects++;
 }
 
 smart_device::smart_device(do_not_use_in_implementation_classes)
-: m_intf(0), m_ata_ptr(0), m_scsi_ptr(0)
+: m_intf(0), m_ata_ptr(0), m_scsi_ptr(0), m_nvme_ptr(0)
 {
   throw std::logic_error("smart_device: wrong constructor called in implementation class");
 }
 
-smart_device::~smart_device() throw()
+smart_device::~smart_device()
 {
+  s_num_objects--;
 }
 
 bool smart_device::is_syscall_unsup() const
@@ -86,6 +85,11 @@ smart_device * smart_device::autodetect_open()
 {
   open();
   return this;
+}
+
+bool smart_device::is_powered_down()
+{
+  return false;
 }
 
 bool smart_device::owns(const smart_device * /*dev*/) const
@@ -193,6 +197,52 @@ bool ata_device::ata_identify_is_cached() const
   return false;
 }
 
+/////////////////////////////////////////////////////////////////////////////
+// scsi_device
+
+bool scsi_device::scsi_pass_through_and_check(scsi_cmnd_io * iop,
+                                              const char * msg)
+{
+  // Provide sense buffer
+  unsigned char sense[32] = {0, };
+  iop->sensep = sense;
+  iop->max_sense_len = sizeof(sense);
+  iop->timeout = SCSI_TIMEOUT_DEFAULT;
+
+  // Run cmd
+  if (!scsi_pass_through(iop)) {
+    if (scsi_debugmode > 0)
+      pout("%sscsi_pass_through() failed, errno=%d [%s]\n",
+           msg, get_errno(), get_errmsg());
+    return false;
+  }
+
+  // Check sense
+  scsi_sense_disect sinfo;
+  scsi_do_sense_disect(iop, &sinfo);
+  int err = scsiSimpleSenseFilter(&sinfo);
+  if (err) {
+    if (scsi_debugmode > 0)
+      pout("%sscsi error: %s\n", msg, scsiErrString(err));
+    return set_err(EIO, "scsi error %s", scsiErrString(err));
+  }
+
+  return true;
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// nvme_device
+
+bool nvme_device::set_nvme_err(nvme_cmd_out & out, unsigned status, const char * msg /* = 0 */)
+{
+  if (!status)
+    throw std::logic_error("nvme_device: set_nvme_err() called with status=0");
+
+  out.status = status;
+  out.status_valid = true;
+  return set_err(EIO, "%sNVMe Status 0x%02x", (msg ? msg : ""), status);
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // tunnelled_device_base
@@ -203,7 +253,7 @@ tunnelled_device_base::tunnelled_device_base(smart_device * tunnel_dev)
 {
 }
 
-tunnelled_device_base::~tunnelled_device_base() throw()
+tunnelled_device_base::~tunnelled_device_base()
 {
   delete m_tunnel_base_dev;
 }
@@ -258,7 +308,10 @@ std::string smart_interface::get_valid_dev_types_str()
 {
   // default
   std::string s =
-    "ata, scsi, sat[,auto][,N][+TYPE], usbcypress[,X], usbjmicron[,p][,x][,N], usbsunplus";
+    "ata, scsi[+TYPE], nvme[,NSID], sat[,auto][,N][+TYPE], usbcypress[,X], "
+    "usbjmicron[,p][,x][,N], usbprolific, usbsunplus, sntjmicron[,NSID], "
+    "sntrealtek, intelliprop,N[+TYPE], jmb39x[-q],N[,sLBA][,force][+TYPE], "
+    "jms56x,N[,sLBA][,force][+TYPE]";
   // append custom
   std::string s2 = get_valid_custom_dev_types_str();
   if (!s2.empty()) {
@@ -337,6 +390,38 @@ const char * smart_interface::get_msg_for_errno(int no)
   return strerror(no);
 }
 
+std::string smart_interface::get_unique_dev_name(const char * name, const char * type) const
+{
+  std::string unique_name;
+#if defined(HAVE_UNISTD_H) && !defined(_WIN32) && !defined(__OS2__)
+  char * p = realpath(name, (char *)0); // nullptr requires POSIX.1.2008 compatibility
+  if (p) {
+    unique_name = p;
+    free(p);
+  }
+  else
+#endif
+    unique_name = name;
+
+  if (*type && is_raid_dev_type(type)) {
+    // -d TYPE options must match if RAID drive number is specified
+    unique_name += " ["; unique_name += type; unique_name += ']';
+  }
+  return unique_name;
+}
+
+bool smart_interface::is_raid_dev_type(const char * type) const
+{
+  if (!strchr(type, ','))
+    return false;
+  if (str_starts_with(type, "sat,"))
+    return false;
+  int i;
+  if (sscanf(type, "%*[^,],%d", &i) != 1)
+    return false;
+  return true;
+}
+
 
 /////////////////////////////////////////////////////////////////////////////
 // Default device factory
@@ -364,8 +449,20 @@ smart_device * smart_interface::get_smart_device(const char * name, const char *
   else if (!strcmp(type, "scsi"))
     dev = get_scsi_device(name, type);
 
-  else if (  ((!strncmp(type, "sat", 3) && (!type[3] || strchr(",+", type[3])))
-           || (!strncmp(type, "usb", 3)))) {
+  else if (str_starts_with(type, "nvme")) {
+    int n1 = -1, n2 = -1, len = strlen(type);
+    unsigned nsid = 0; // invalid namespace id -> use default
+    sscanf(type, "nvme%n,0x%x%n", &n1, &nsid, &n2);
+    if (!(n1 == len || n2 == len)) {
+      set_err(EINVAL, "Invalid NVMe namespace id in '%s'", type);
+      return 0;
+    }
+    dev = get_nvme_device(name, type, nsid);
+  }
+  // TODO: Unify handling of '-d TYPE...+BASETYPE...'
+  else if (  (str_starts_with(type, "sat") && (!type[3] || strchr(",+", type[3])))
+           || str_starts_with(type, "scsi+")
+           || str_starts_with(type, "usb")                                        ) {
     // Split "sat...+base..." -> ("sat...", "base...")
     unsigned satlen = strcspn(type, "+");
     std::string sattype(type, satlen);
@@ -384,11 +481,55 @@ smart_device * smart_interface::get_smart_device(const char * name, const char *
       return 0;
     }
     // Attach SAT tunnel
-    ata_device * satdev = get_sat_device(sattype.c_str(), basedev->to_scsi());
-    if (!satdev)
+    return get_sat_device(sattype.c_str(), basedev.release()->to_scsi());
+  }
+
+  else if (str_starts_with(type, "snt")) {
+    smart_device_auto_ptr basedev( get_smart_device(name, "scsi") );
+    if (!basedev) {
+      set_err(EINVAL, "Type '%s': %s", type, get_errmsg());
       return 0;
-    basedev.release();
-    return satdev;
+    }
+
+    return get_snt_device(type, basedev.release()->to_scsi());
+  }
+
+  else if (str_starts_with(type, "jmb39x") || str_starts_with(type, "jms56x")) {
+    // Split "jmb39x...+base..." -> ("jmb39x...", "base...")
+    unsigned jmblen = strcspn(type, "+");
+    std::string jmbtype(type, jmblen);
+    const char * basetype = (type[jmblen] ? type+jmblen+1 : "");
+    // Recurse to allocate base device, default is standard SCSI
+    if (!*basetype)
+      basetype = "scsi";
+    smart_device_auto_ptr basedev( get_smart_device(name, basetype) );
+    if (!basedev) {
+      set_err(EINVAL, "Type '%s+...': %s", jmbtype.c_str(), get_errmsg());
+      return 0;
+    }
+    // Attach JMB39x tunnel
+    return get_jmb39x_device(jmbtype.c_str(), basedev.release());
+  }
+
+  else if (str_starts_with(type, "intelliprop")) {
+    // Split "intelliprop...+base..." -> ("intelliprop...", "base...")
+    unsigned itllen = strcspn(type, "+");
+    std::string itltype(type, itllen);
+    const char * basetype = (type[itllen] ? type+itllen+1 : "");
+    // Recurse to allocate base device, default is standard ATA
+    if (!*basetype)
+      basetype = "ata";
+    smart_device_auto_ptr basedev( get_smart_device(name, basetype) );
+    if (!basedev) {
+      set_err(EINVAL, "Type '%s': %s", type, get_errmsg());
+      return 0;
+    }
+    // Result must be ATA
+    if (!basedev->is_ata()) {
+      set_err(EINVAL, "Type '%s': Device type '%s' is not ATA", type, basetype);
+      return 0;
+    }
+    return get_intelliprop_device(itltype.c_str(), basedev.release()->to_ata());
   }
 
   else {
@@ -400,6 +541,37 @@ smart_device * smart_interface::get_smart_device(const char * name, const char *
   return dev;
 }
 
+bool smart_interface::scan_smart_devices(smart_device_list & /*devlist*/,
+  const char * /*type*/, const char * /*pattern*/ /* = 0 */)
+{
+  return set_err(ENOSYS);
+}
+
+bool smart_interface::scan_smart_devices(smart_device_list & devlist,
+  const smart_devtype_list & types, const char * pattern /* = 0 */)
+{
+  unsigned n = types.size();
+  if (n == 0)
+    return scan_smart_devices(devlist, (const char *)0, pattern);
+  if (n == 1)
+    return scan_smart_devices(devlist, types.front().c_str(), pattern);
+
+  for (unsigned i = 0; i < n; i++) {
+    smart_device_list tmplist;
+    if (!scan_smart_devices(tmplist, types[i].c_str(), pattern))
+      return false;
+    devlist.append(tmplist);
+  }
+
+  return true;
+}
+
+nvme_device * smart_interface::get_nvme_device(const char * /*name*/, const char * /*type*/, unsigned /*nsid*/)
+{
+  set_err(ENOSYS, "NVMe devices are not supported in this version of smartmontools");
+  return 0;
+}
+
 smart_device * smart_interface::get_custom_smart_device(const char * /*name*/, const char * /*type*/)
 {
   return 0;
@@ -408,4 +580,13 @@ smart_device * smart_interface::get_custom_smart_device(const char * /*name*/, c
 std::string smart_interface::get_valid_custom_dev_types_str()
 {
   return "";
+}
+
+smart_device * smart_interface::get_scsi_passthrough_device(const char * type, scsi_device * scsidev)
+{
+  if (!strncmp(type, "snt", 3)) {
+    return get_snt_device(type, scsidev);
+  }
+
+  return get_sat_device(type, scsidev);
 }

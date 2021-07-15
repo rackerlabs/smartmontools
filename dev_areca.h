@@ -1,24 +1,17 @@
 /*
  * dev_areca.h
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
  * Copyright (C) 2012 Hank Wu <hank@areca.com.tw>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #ifndef DEV_ARECA_H
 #define DEV_ARECA_H
 
-#define DEV_ARECA_H_CVSID "$Id: dev_areca.h 3854 2013-09-12 05:36:20Z chrfranke $"
+#define DEV_ARECA_H_CVSID "$Id: dev_areca.h 5089 2020-10-06 15:31:47Z chrfranke $"
 
 /////////////////////////////////////////////////////////////////////////////
 /// Areca RAID support
@@ -99,7 +92,7 @@ virtual public smart_device
 {
 public:
   generic_areca_device(smart_interface * intf, const char * dev_name, int disknum, int encnum = 1);
-  ~generic_areca_device() throw();
+  ~generic_areca_device();
 
   /////////////////////////////////////////////////////////////////////
   // OS-dependent functions
@@ -118,9 +111,10 @@ public:
   virtual bool arcmsr_ata_pass_through(const ata_cmd_in & in, ata_cmd_out & out);
 
 protected:
-  generic_areca_device() : smart_device(never_called)
-  {
-  }
+  generic_areca_device()
+    : smart_device(never_called),
+      m_disknum(-1), m_encnum(-1)
+      { }
 
   void set_disknum(int disknum)
   {m_disknum = disknum;}
@@ -146,7 +140,7 @@ class areca_ata_device
 {
 public:
   areca_ata_device(smart_interface * intf, const char * dev_name, int disknum, int encnum = 1);
-  ~areca_ata_device() throw();
+  ~areca_ata_device();
   bool arcmsr_lock() { return true; }
   bool arcmsr_unlock() { return true; }
   int arcmsr_do_scsi_io(struct scsi_cmnd_io * /* iop */)
@@ -167,7 +161,7 @@ class areca_scsi_device
 {
 public:
   areca_scsi_device(smart_interface * intf, const char * dev_name, int disknum, int encnum = 1);
-  ~areca_scsi_device() throw();
+  ~areca_scsi_device();
   bool arcmsr_lock() { return true; }
   bool arcmsr_unlock() { return true; }
   int arcmsr_do_scsi_io(struct scsi_cmnd_io * /* iop */)
