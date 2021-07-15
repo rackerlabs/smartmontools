@@ -1,24 +1,17 @@
 /*
  * dev_interface.h
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
- * Copyright (C) 2008-12 Christian Franke <smartmontools-support@lists.sourceforge.net>
+ * Copyright (C) 2008-20 Christian Franke
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #ifndef DEV_INTERFACE_H
 #define DEV_INTERFACE_H
 
-#define DEV_INTERFACE_H_CVSID "$Id: dev_interface.h 3663 2012-10-24 20:35:55Z chrfranke $\n"
+#define DEV_INTERFACE_H_CVSID "$Id: dev_interface.h 5114 2020-11-09 21:53:58Z chrfranke $\n"
 
 #include "utility.h"
 
@@ -33,6 +26,7 @@
 class smart_interface;
 class ata_device;
 class scsi_device;
+class nvme_device;
 
 /// Base class for all devices
 class smart_device
@@ -78,10 +72,10 @@ protected:
   enum do_not_use_in_implementation_classes { never_called };
   /// Dummy constructor for abstract classes.
   /// Must never be called in implementation classes.
-  smart_device(do_not_use_in_implementation_classes);
+  explicit smart_device(do_not_use_in_implementation_classes);
 
 public:
-  virtual ~smart_device() throw();
+  virtual ~smart_device();
 
 // Attributes
 public:
@@ -94,6 +88,9 @@ public:
   /// Return true if SCSI device
   bool is_scsi() const
     { return !!m_scsi_ptr; }
+  /// Return true if NVMe device
+  bool is_nvme() const
+    { return !!m_nvme_ptr; }
 
   /// Downcast to ATA device.
   ata_device * to_ata()
@@ -107,6 +104,12 @@ public:
   /// Downcast to SCSI device (const).
   const scsi_device * to_scsi() const
     { return m_scsi_ptr; }
+  /// Downcast to NVMe device.
+  nvme_device * to_nvme()
+    { return m_nvme_ptr; }
+  /// Downcast to NVMe device (const).
+  const nvme_device * to_nvme() const
+    { return m_nvme_ptr; }
 
   ///////////////////////////////////////////////
   // Device information
@@ -169,6 +172,10 @@ public:
   /// Message is retrieved from interface's get_msg_for_errno(no).
   bool set_err(int no);
 
+  /// Get current number of allocated 'smart_device' objects.
+  static int get_num_objects()
+    { return s_num_objects; }
+
 // Operations
 public:
   ///////////////////////////////////////////////
@@ -189,6 +196,17 @@ public:
   /// In this case, the original pointer is no longer valid.
   /// Default implementation calls 'open()' and returns 'this'.
   virtual smart_device * autodetect_open();
+
+  ///////////////////////////////////////////////
+  // Support for checking power mode reported by operating system
+
+  /// Early test if device is powered up or down.
+  /// Can be used without calling 'open()' first!
+  /// Return true when device is powered down, false when
+  /// powered up. If this function is not implemented or
+  /// the mode cannot be determined, return false.
+  /// Default implementation returns false.
+  virtual bool is_powered_down();
 
   ///////////////////////////////////////////////
   // Support for tunnelled devices
@@ -215,14 +233,19 @@ private:
   device_info m_info;
   error_info m_err;
 
-  // Pointers for to_ata(), to_scsi(),
-  // set by ATA/SCSI interface classes.
+  // Pointers for to_ata(), to_scsi(), to_nvme()
+  // set by ATA/SCSI/NVMe interface classes.
   friend class ata_device;
   ata_device * m_ata_ptr;
   friend class scsi_device;
   scsi_device * m_scsi_ptr;
+  friend class nvme_device;
+  nvme_device * m_nvme_ptr;
 
-  // Prevent copy/assigment
+  // Number of objects.
+  static int s_num_objects;
+
+  // Prevent copy/assignment
   smart_device(const smart_device &);
   void operator=(const smart_device &);
 };
@@ -561,6 +584,18 @@ public:
   /// Returns false on error.
   virtual bool scsi_pass_through(scsi_cmnd_io * iop) = 0;
 
+  // Call scsi_pass_through and check sense.
+  bool scsi_pass_through_and_check(scsi_cmnd_io * iop,
+                                   const char * msg = "");
+
+  /// Always try READ CAPACITY(10) (rcap10) first but once we know
+  /// rcap16 is needed, use it instead.
+  void set_rcap16_first()
+    { rcap16_first = true; }
+
+  bool use_rcap16() const
+    { return rcap16_first; }
+
 protected:
   /// Hide/unhide SCSI interface.
   void hide_scsi(bool hide = true)
@@ -568,8 +603,100 @@ protected:
 
   /// Default constructor, registers device as SCSI.
   scsi_device()
-    : smart_device(never_called)
+    : smart_device(never_called),
+      rcap16_first(false)
     { hide_scsi(false); }
+
+private:
+  bool rcap16_first;
+};
+
+
+/////////////////////////////////////////////////////////////////////////////
+// NVMe specific interface
+
+/// NVMe pass through input parameters
+struct nvme_cmd_in
+{
+  unsigned char opcode; ///< Opcode (CDW0 07:00)
+  unsigned nsid; ///< Namespace ID
+  unsigned cdw10, cdw11, cdw12, cdw13, cdw14, cdw15; ///< Cmd specific
+
+  void * buffer; ///< Pointer to data buffer
+  unsigned size; ///< Size of buffer
+
+  enum {
+    no_data = 0x0, data_out = 0x1, data_in = 0x2, data_io = 0x3
+  };
+
+  /// Get I/O direction from opcode
+  unsigned char direction() const
+    { return (opcode & 0x3); }
+
+  // Prepare for DATA IN command
+  void set_data_in(unsigned char op, void * buf, unsigned sz)
+    {
+      opcode = op;
+      if (direction() != data_in)
+        throw std::logic_error("invalid opcode for DATA IN");
+      buffer = buf;
+      size = sz;
+    }
+
+  nvme_cmd_in()
+    : opcode(0), nsid(0),
+      cdw10(0), cdw11(0), cdw12(0), cdw13(0), cdw14(0), cdw15(0),
+      buffer(0), size(0)
+    { }
+};
+
+/// NVMe pass through output parameters
+struct nvme_cmd_out
+{
+   unsigned result; ///< Command specific result (DW0)
+   unsigned short status; ///< Status Field (DW3 31:17)
+   bool status_valid; ///< true if status is valid
+
+   nvme_cmd_out()
+     : result(0), status(0), status_valid(false)
+     { }
+};
+
+/// NVMe device access
+class nvme_device
+: virtual public /*extends*/ smart_device
+{
+public:
+  /// NVMe pass through.
+  /// Return false on error.
+  virtual bool nvme_pass_through(const nvme_cmd_in & in, nvme_cmd_out & out) = 0;
+
+  /// Get namespace id.
+  unsigned get_nsid() const
+    { return m_nsid; }
+
+protected:
+  /// Hide/unhide NVMe interface.
+  void hide_nvme(bool hide = true)
+    { m_nvme_ptr = (!hide ? this : 0); }
+
+  /// Constructor requires namespace ID, registers device as NVMe.
+  explicit nvme_device(unsigned nsid)
+    : smart_device(never_called),
+      m_nsid(nsid)
+    { hide_nvme(false); }
+
+  /// Set namespace id.
+  /// Should be called in open() function if get_nsid() returns 0.
+  void set_nsid(unsigned nsid)
+    { m_nsid = nsid; }
+
+  /// Set last error number and message if pass-through returns NVMe error status.
+  /// Returns false always to allow use as a return expression.
+  bool set_nvme_err(nvme_cmd_out & out, unsigned status, const char * msg = 0);
+
+private:
+  unsigned m_nsid;
 };
 
 
@@ -589,7 +716,7 @@ public:
     : m_dev(dev), m_base_dev(base_dev) { }
 
   /// Destructor deletes device object.
-  ~any_device_auto_ptr() throw()
+  ~any_device_auto_ptr()
     { reset(); }
 
   /// Assign a new pointer.
@@ -660,6 +787,7 @@ private:
 typedef any_device_auto_ptr<smart_device> smart_device_auto_ptr;
 typedef any_device_auto_ptr<ata_device>   ata_device_auto_ptr;
 typedef any_device_auto_ptr<scsi_device>  scsi_device_auto_ptr;
+typedef any_device_auto_ptr<nvme_device>  nvme_device_auto_ptr;
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -673,7 +801,7 @@ public:
   smart_device_list()
     { }
 
-  ~smart_device_list() throw()
+  ~smart_device_list()
     {
       for (unsigned i = 0; i < m_list.size(); i++)
         delete m_list[i];
@@ -714,14 +842,29 @@ public:
       return dev;
     }
 
+  void append(smart_device_list & devlist)
+    {
+      for (unsigned i = 0; i < devlist.size(); i++) {
+        smart_device * dev = devlist.at(i);
+        if (!dev)
+          continue;
+        push_back(dev);
+        devlist.m_list.at(i) = 0;
+      }
+    }
+
 // Implementation
 private:
   std::vector<smart_device *> m_list;
 
-  // Prevent copy/assigment
+  // Prevent copy/assignment
   smart_device_list(const smart_device_list &);
   void operator=(const smart_device_list &);
 };
+
+
+/// List of types for DEVICESCAN
+typedef std::vector<std::string> smart_devtype_list;
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -738,7 +881,7 @@ public:
   smart_interface()
     { }
 
-  virtual ~smart_interface() throw()
+  virtual ~smart_interface()
     { }
 
   /// Return info string about build host and/or OS version.
@@ -820,9 +963,30 @@ public:
 
   /// Fill 'devlist' with devices of some 'type' with device names
   /// specified by some optional 'pattern'.
+  /// Use platform specific default if 'type' is empty or 0.
   /// Return false on error.
+  /// Default implementation returns false;
   virtual bool scan_smart_devices(smart_device_list & devlist, const char * type,
-    const char * pattern = 0) = 0;
+    const char * pattern = 0);
+
+  /// Fill 'devlist' with devices of all 'types' with device names
+  /// specified by some optional 'pattern'.
+  /// Use platform specific default if 'types' is empty.
+  /// Return false on error.
+  /// Default implementation calls above function for all types
+  /// and concatenates the results.
+  virtual bool scan_smart_devices(smart_device_list & devlist,
+    const smart_devtype_list & types, const char * pattern = 0);
+
+  /// Return unique device name which is (only) suitable for duplicate detection.
+  /// Default implementation resolves symlinks on POSIX systems and appends
+  /// " [type]" if is_raid_dev_type(type)' returns true.
+  virtual std::string get_unique_dev_name(const char * name, const char * type) const;
+
+  /// Return true if the 'type' string contains a RAID drive number.
+  /// Default implementation returns true if 'type' starts with '[^,]+,[0-9]'
+  /// but not with 'sat,'.
+  virtual bool is_raid_dev_type(const char * type) const;
 
 protected:
   /// Return standard ATA device.
@@ -830,6 +994,11 @@ protected:
 
   /// Return standard SCSI device.
   virtual scsi_device * get_scsi_device(const char * name, const char * type) = 0;
+
+  /// Return standard NVMe device.
+  /// Default implementation returns 0.
+  virtual nvme_device * get_nvme_device(const char * name, const char * type,
+    unsigned nsid);
 
   /// Autodetect device if no device type specified.
   virtual smart_device * autodetect_smart_device(const char * name) = 0;
@@ -843,10 +1012,35 @@ protected:
   /// Default implementation returns empty string.
   virtual std::string get_valid_custom_dev_types_str();
 
-  /// Return ATA->SCSI filter for SAT or USB.
+  /// Return ATA->SCSI of NVMe->SCSI filter for a SAT, SNT or USB 'type'.
+  /// Uses get_sat_device and get_snt_device.
+  /// Return 0 and delete 'scsidev' on error.
+  virtual smart_device * get_scsi_passthrough_device(const char * type, scsi_device * scsidev);
+
+  /// Return ATA->SCSI filter for a SAT or USB 'type'.
+  /// Device 'scsidev' is used for SCSI access.
+  /// Return 0 and delete 'scsidev' on error.
   /// Override only if platform needs special handling.
   virtual ata_device * get_sat_device(const char * type, scsi_device * scsidev);
   //{ implemented in scsiata.cpp }
+
+  /// Return NVMe->SCSI filter for a SNT or USB 'type'.
+  /// Device 'scsidev' is used for SCSI access.
+  /// Return 0 and delete 'scsidev' on error.
+  /// Override only if platform needs special handling.
+  virtual nvme_device * get_snt_device(const char * type, scsi_device * scsidev);
+  //{ implemented in scsinvme.cpp }
+
+  /// Return filter for Intelliprop controllers.
+  virtual ata_device * get_intelliprop_device(const char * type, ata_device * atadev);
+  //{ implemented in dev_intelliprop.cpp }
+
+  /// Return JMB93x->ATA filter.
+  /// Device 'smartdev' is used for ATA or SCSI R/W access.
+  /// Return 0 and delete 'scsidev' on error.
+  /// Override only if platform needs special handling.
+  virtual ata_device * get_jmb39x_device(const char * type, smart_device * smartdev);
+  //{ implemented in dev_jmb39x_raid.cpp }
 
 public:
   /// Try to detect a SAT device behind a SCSI interface.
@@ -875,7 +1069,7 @@ private:
   friend smart_interface * smi(); // below
   static smart_interface * s_instance; ///< Pointer to the interface object.
 
-  // Prevent copy/assigment
+  // Prevent copy/assignment
   smart_interface(const smart_interface &);
   void operator=(const smart_interface &);
 };

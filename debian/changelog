@@ -1,3 +1,9 @@
+smartmontools (7.2-1rax1) unstable; urgency=low
+  
+  * Adding smartmontools 7.2
+
+ -- Jonathan Brown <jbrown@rackspace.com>  Tue, 19 Jan 2016 20:57:40 +0000
+
 smartmontools (6.4-1rax1) unstable; urgency=low
 
   * Initial release

@@ -1,22 +1,15 @@
 /*
  * dev_legacy.cpp
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
- * Copyright (C) 2008-11 Christian Franke <smartmontools-support@lists.sourceforge.net>
+ * Copyright (C) 2008-20 Christian Franke
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include "config.h"
-#include "int64.h"
+
 #include "utility.h"
 #include "atacmds.h"
 #include "scsicmds.h"
@@ -25,7 +18,7 @@
 
 #include <errno.h>
 
-const char * dev_legacy_cpp_cvsid = "$Id: dev_legacy.cpp 3263 2011-02-20 18:32:56Z chrfranke $"
+const char * dev_legacy_cpp_cvsid = "$Id: dev_legacy.cpp 5089 2020-10-06 15:31:47Z chrfranke $"
   DEV_INTERFACE_H_CVSID;
 
 /////////////////////////////////////////////////////////////////////////////
@@ -62,7 +55,7 @@ public:
     : smart_device(never_called),
       m_fd(-1), m_mode(mode) { }
 
-  virtual ~legacy_smart_device() throw();
+  virtual ~legacy_smart_device();
 
   virtual bool is_open() const;
 
@@ -81,7 +74,7 @@ private:
 };
 
 
-legacy_smart_device::~legacy_smart_device() throw()
+legacy_smart_device::~legacy_smart_device()
 {
   if (m_fd >= 0)
     ::deviceclose(m_fd);
@@ -275,10 +268,13 @@ smart_device * legacy_smart_interface::autodetect_smart_device(const char * name
 
 static void free_devnames(char * * devnames, int numdevs)
 {
-  static const char version[] = "$Id: dev_legacy.cpp 3263 2011-02-20 18:32:56Z chrfranke $";
-  for (int i = 0; i < numdevs; i++)
-    FreeNonZero(devnames[i], -1,__LINE__, version);
-  FreeNonZero(devnames, (sizeof (char*) * numdevs),__LINE__, version);
+  if (!devnames)
+    return;
+  for (int i = 0; i < numdevs; i++) {
+    if (devnames[i])
+      free(devnames[i]);
+  }
+  free(devnames);
 }
 
 bool legacy_smart_interface::scan_smart_devices(smart_device_list & devlist,

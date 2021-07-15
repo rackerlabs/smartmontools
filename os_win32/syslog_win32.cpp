@@ -1,18 +1,11 @@
 /*
  * os_win32/syslog_win32.cpp
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
- * Copyright (C) 2004-12 Christian Franke <smartmontools-support@lists.sourceforge.net>
+ * Copyright (C) 2004-19 Christian Franke
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 // Win32 Emulation of syslog() for smartd
@@ -33,7 +26,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h> // RegisterEventSourceA(), ReportEventA(), ...
 
-const char *syslog_win32_cpp_cvsid = "$Id: syslog_win32.cpp 3575 2012-07-19 21:32:56Z chrfranke $"
+const char *syslog_win32_cpp_cvsid = "$Id: syslog_win32.cpp 4974 2019-10-19 15:34:34Z chrfranke $"
   SYSLOG_H_CVSID;
 
 #ifdef _MSC_VER
@@ -296,14 +289,15 @@ static void write_event_log(int priority, const char * lines)
 
 static void write_logfile(FILE * f, int priority, const char * lines)
 {
-	time_t now; char stamp[sizeof("2004-04-04 10:00:00")+13];
-	int i;
+	char stamp[32];
+	time_t now = time(0);
+	struct tm tmbuf;
+	if (!(   !localtime_s(&tmbuf, &now)
+	      && strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tmbuf))) {
+		stamp[0] = '?'; stamp[1] = 0;
+	}
 
-	now = time((time_t*)0);
-	if (!strftime(stamp, sizeof(stamp)-1, "%Y-%m-%d %H:%M:%S", localtime(&now)))
-		strcpy(stamp,"?");
-
-	for (i = 0; lines[i]; i++) {
+	for (int i = 0; lines[i]; i++) {
 		int len = 0;
 		while (lines[i+len] && lines[i+len] != '\n')
 			len++;
@@ -420,7 +414,7 @@ int main(int argc, char* argv[])
 		if (i % 13 == 0)
 			Sleep(1000L);
 		sprintf(buf, "Log Line %d\n", i);
-		syslog(i % 17 ? LOG_INFO : LOG_ERR, buf);
+		syslog((i % 17) ? LOG_INFO : LOG_ERR, buf);
 	}
 	closelog();
 	return 0;

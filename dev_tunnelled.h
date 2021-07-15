@@ -1,24 +1,17 @@
 /*
  * dev_tunnelled.h
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
- * Copyright (C) 2008 Christian Franke <smartmontools-support@lists.sourceforge.net>
+ * Copyright (C) 2008-20 Christian Franke
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #ifndef DEV_TUNNELLED_H
 #define DEV_TUNNELLED_H
 
-#define DEV_TUNNELLED_H_CVSID "$Id: dev_tunnelled.h,v 1.1 2008/07/25 21:16:00 chrfranke Exp $\n"
+#define DEV_TUNNELLED_H_CVSID "$Id: dev_tunnelled.h 5089 2020-10-06 15:31:47Z chrfranke $"
 
 #include "dev_interface.h"
 
@@ -34,7 +27,7 @@ protected:
   explicit tunnelled_device_base(smart_device * tunnel_dev);
 
 public:
-  virtual ~tunnelled_device_base() throw();
+  virtual ~tunnelled_device_base();
 
   virtual bool is_open() const;
 
@@ -67,6 +60,14 @@ public:
 protected:
   explicit tunnelled_device(tunnel_device_type * tunnel_dev)
     : smart_device(smart_device::never_called),
+      tunnelled_device_base(tunnel_dev),
+      m_tunnel_dev(tunnel_dev)
+    { }
+
+  // For nvme_device
+  explicit tunnelled_device(tunnel_device_type * tunnel_dev, unsigned nsid)
+    : smart_device(smart_device::never_called),
+      BaseDev(nsid),
       tunnelled_device_base(tunnel_dev),
       m_tunnel_dev(tunnel_dev)
     { }

@@ -1,35 +1,22 @@
 /*
  * scsiprint.h
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: http://www.smartmontools.org
  *
- * Copyright (C) 2002-9 Bruce Allen <smartmontools-support@lists.sourceforge.net>
+ * Copyright (C) 2002-9 Bruce Allen
  * Copyright (C) 2000 Michael Cornwell <cornwell@acm.org>
  *
  * Additional SCSI work:
- * Copyright (C) 2003-13 Douglas Gilbert <dgilbert@interlog.com>
+ * Copyright (C) 2003-18 Douglas Gilbert <dgilbert@interlog.com>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- *
- * This code was originally developed as a Senior Thesis by Michael Cornwell
- * at the Concurrent Systems Laboratory (now part of the Storage Systems
- * Research Center), Jack Baskin School of Engineering, University of
- * California, Santa Cruz. http://ssrc.soe.ucsc.edu/
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 
 #ifndef SCSI_PRINT_H_
 #define SCSI_PRINT_H_
 
-#define SCSIPRINT_H_CVSID "$Id: scsiprint.h 3776 2013-02-17 04:25:42Z dpgilbert $\n"
+#define SCSIPRINT_H_CVSID "$Id: scsiprint.h 5131 2020-12-15 21:30:33Z dpgilbert $\n"
 
 // Options for scsiPrintMain
 struct scsi_print_options
@@ -56,6 +43,13 @@ struct scsi_print_options
   bool get_wce, get_rcd;
   short int set_wce, set_rcd;  // disable(-1), enable(1) cache
 
+  unsigned char powermode; // Enhancement Skip check, if disk in idle or standby mode
+  unsigned char powerexit; // exit() code for low power mode
+
+  int set_standby;         // set(1..255->0..254) standby timer
+  bool set_standby_now;    // set drive to standby
+  bool set_active;         // set drive to active
+
   scsi_print_options()
     : drive_info(false),
       smart_check_status(false),
@@ -73,7 +67,10 @@ struct scsi_print_options
       smart_selftest_force(false),
       sasphy(false), sasphy_reset(false),
       get_wce(false), get_rcd(false),
-      set_wce(0), set_rcd(0)
+      set_wce(0), set_rcd(0),
+      powermode(0), powerexit(0), // Power Check -n enhancement option
+      set_standby(0), set_standby_now(false), // enable Standby options for -s
+      set_active(false)
     { }
 };
 

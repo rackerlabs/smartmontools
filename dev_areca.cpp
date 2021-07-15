@@ -1,27 +1,19 @@
 /*
  * dev_areca.cpp
  *
- * Home page of code is: http://smartmontools.sourceforge.net
+ * Home page of code is: https://www.smartmontools.org
  *
  * Copyright (C) 2012 Hank Wu <hank@areca.com.tw>
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * You should have received a copy of the GNU General Public License
- * (for example COPYING); If not, see <http://www.gnu.org/licenses/>.
- *
+ * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
 #include "config.h"
-#include "int64.h"
 
 #include "dev_interface.h"
 #include "dev_areca.h"
 
-const char * dev_areca_cpp_cvsid = "$Id: dev_areca.cpp 3872 2014-02-03 21:07:51Z chrfranke $"
+const char * dev_areca_cpp_cvsid = "$Id: dev_areca.cpp 5089 2020-10-06 15:31:47Z chrfranke $"
   DEV_ARECA_H_CVSID;
 
 #include "atacmds.h"
@@ -86,7 +78,7 @@ generic_areca_device::generic_areca_device(smart_interface * intf, const char * 
   set_info().info_name = strprintf("%s [areca_disk#%02d_enc#%02d]", dev_name, disknum, encnum);
 }
 
-generic_areca_device::~generic_areca_device() throw()
+generic_areca_device::~generic_areca_device()
 {
 
 }
@@ -131,8 +123,8 @@ int generic_areca_device::arcmsr_command_handler(unsigned long arcmsr_cmd, unsig
   struct scsi_cmnd_io iop;
   int dir = DXFER_TO_DEVICE;
 
-  UINT8 cdb[10]={0};
-  UINT8 sense[32]={0};
+  uint8_t cdb[10]={0};
+  uint8_t sense[32]={0};
 
   unsigned char *areca_return_packet;
   int total = 0;
@@ -157,6 +149,7 @@ int generic_areca_device::arcmsr_command_handler(unsigned long arcmsr_cmd, unsig
       sBuf.srbioctl.Length = data_len;
       memcpy((unsigned char *)sBuf.ioctldatabuffer, (unsigned char *)data, data_len);
     }
+    /* FALLTHRU */
     // commands for clearing related buffer of driver
   case ARCMSR_CLEAR_RQBUFFER:
   case ARCMSR_CLEAR_WQBUFFER:
@@ -297,14 +290,14 @@ int generic_areca_device::arcmsr_ui_handler(unsigned char *areca_packet, int are
   if (expected==-3) {
     return set_err(EIO);
   }
-  expected = arcmsr_command_handler(ARCMSR_CLEAR_WQBUFFER, NULL, 0);
+  arcmsr_command_handler(ARCMSR_CLEAR_WQBUFFER, NULL, 0);
   expected = arcmsr_command_handler(ARCMSR_WRITE_WQBUFFER, areca_packet, areca_packet_len);
   if ( expected > 0 )
   {
     expected = arcmsr_command_handler(ARCMSR_READ_RQBUFFER, return_buff, sizeof(return_buff));
   }
 
-  if ( expected < 0 )
+  if ( expected < 3 + 1 ) // Prefix + Checksum
   {
     return -1;
   }
@@ -660,7 +653,7 @@ areca_ata_device::areca_ata_device(smart_interface * intf, const char * dev_name
   set_info().info_name = strprintf("%s [areca_disk#%02d_enc#%02d]", dev_name, disknum, encnum);
 }
 
-areca_ata_device::~areca_ata_device() throw()
+areca_ata_device::~areca_ata_device()
 {
 
 }
@@ -688,7 +681,7 @@ areca_scsi_device::areca_scsi_device(smart_interface * intf, const char * dev_na
   set_info().info_name = strprintf("%s [areca_disk#%02d_enc#%02d]", dev_name, disknum, encnum);
 }
 
-areca_scsi_device::~areca_scsi_device() throw()
+areca_scsi_device::~areca_scsi_device()
 {
 
 }
